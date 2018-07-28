@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>DOSBox</title>
+		<style type="text/css">
+			*
+			{
+				margin: 0;
+				padding: 0;
+				overflow: hidden;
+			}
+		</style>
+	</head>
+	<body>
+		<canvas id="canvas"></canvas>
+		<script type="text/javascript">
+			var electron = require("electron");
+			var mainconsole = electron.remote.getGlobal("console");
+			var fs = require("fs");
+			var path = require("path");
+			
+			function getDirs(p)
+			{
+				return fs.readdirSync(p).filter(f => fs.statSync(path.join(p, f)).isDirectory());
+			}
+			
+			var envfix = false;
+			ENVIRONMENT_IS_NODE = true;
+			
+			var Module =
+			{
+				preRun: [function ()
+				{
+					// We can't just mount virtual / to real / but
+					// let's mount almost every subdirectory
+					FS.rmdir("/home/web_user"); // pain in the but
+					getDirs("/").filter(d => d !== "dev" && d !== "proc").forEach(function (d)
+					{
+						d = `/${d}`;
+						if (d !== "/home" && d !== "/tmp")
+						{
+							mainconsole.log(`making ${d}`);
+							FS.mkdir(d);
+						}
+						mainconsole.log(`mounting ${d}`);
+						FS.mount(NODEFS, {root: d}, d);
+					});
+					mainconsole.log("mounts finished");
+				}],
+				postRun: [],
+				print: function (text)
+				{
+					// This hack is the only way I can see to mess with
+					// the environment after the default values have
+					// been set by emscripten but before they're read
+					// by DOSBox.  Good design pattern
+					mainconsole.log(text);
+					if (!envfix)
+					{
+						// On the off chance some disturbed user
+						// actually calls their account "web_user" this
+						// tells us that we still fixed the env
+						envfix = true;
+						
+						// We also can't give the whole environment
+						// because its size is capped in emscripten
+						ENV.USER = process.env.USER;
+						ENV.PATH = process.env.PATH;
+						ENV.PWD = process.env.PWD;
+						ENV.HOME = process.env.HOME;
+						ENV.LANG = process.env.LANG;
+					}
+				}
+				,
+				printErr: mainconsole.error,
+				canvas: document.getElementById("canvas"),
+				setStatus: function (text) { },
+				totalDependencies: 0,
+				monitorRunDependencies: function (left) { }
+			};
+			
+			var width = 640, height = 400;
+			new MutationObserver(function(mutations)
+			{
+				if (canvas.clientWidth !== width || canvas.clientHeight !== height)
+				{
+					width = canvas.clientWidth;
+					height = canvas.clientHeight;
+					electron.ipcRenderer.send("resize", width, height);
+				}
+			}).observe(document.getElementById("canvas"), {attributes: true});
+			window.onerror = function (event)
+			{
+				mainconsole.error(event);
+				electron.remote.app.quit();
+			};
+			
+			// copied from auto generated dosbox.html
+			var memoryInitializer = 'dosbox.html.mem';
+			memoryInitializer = Module['locateFile'] ? Module['locateFile'](memoryInitializer, '') : memoryInitializer;
+			Module['memoryInitializerRequestURL'] = memoryInitializer;
+			var meminitXHR = Module['memoryInitializerRequest'] = new XMLHttpRequest();
+			meminitXHR.open('GET', memoryInitializer, true);
+			meminitXHR.responseType = 'arraybuffer';
+			meminitXHR.send(null);
+			
+			var script = document.createElement('script');
+			script.src = "dosbox.js";
+			document.body.appendChild(script);
+		</script>
+	</body>
+</html>
+
